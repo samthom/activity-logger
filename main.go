@@ -70,14 +70,23 @@ func LogByUser(res http.ResponseWriter, req *http.Request) {
 	var logg []*Log
 	params := mux.Vars(req)
 	id := params["id"]
-	// page := params["page"]
+	page := params["page"]
+	pg, _ := strconv.ParseInt(page,10,64)
 	number := params["no"]
 	no, _ := strconv.ParseInt(number,10,64)
 	findOptions := options.Find()
 	findOptions.SetLimit(no)
-
+	skip := no*pg
 	ObjId, _ := primitive.ObjectIDFromHex(id)
-	query := bson.M{"user_id": ObjId}
+	// query := bson.M{"user_id": ObjId}
+	query := []bson.M{
+		bson.M{
+			"$match": bson.M{"user_id": ObjId},
+		},
+		bson.M{
+			"$skip": skip,
+		},
+	}
 	collection := database.Collection("logs")
 	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
 	cur, err := collection.Find(ctx, query, findOptions)
