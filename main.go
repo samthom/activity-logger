@@ -1,148 +1,114 @@
 package main
 
 import (
-	"log"
-	"fmt"
-	"strconv"
-	"net/http"
+	"database/sql"
 	"encoding/json"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"context"
-	"github.com/gorilla/mux"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
 	"time"
+
+	"github.com/gorilla/mux"
+	_ "github.com/lib/pq"
 )
 
-// var client *mongo.Client
-var database *mongo.Database
-
-// log collection struct to save data to the database
-type Log struct {
-	ID primitive.ObjectID `json:"_id,omitempty" bson:"_id,omitempty"`
-	User primitive.ObjectID `json:"user_id" bson:"user_id"`
-	Operation string `json:"operation,omitempty" bson:"operation,omitempty"`
-	Entity string `json:"entity,omitempty" bson:"entity,omitempty"`
-	Info string `json:"info,omitempty" bson:"info,omitempty"`
-	Created string `json:"created_at" bson:"created_at"`
+// LogRequest collection struct to save data to the database
+type LogRequest struct {
+	User      string `json:"user_id"`
+	Operation string `json:"operation"`
+	Entity    string `json:"entity,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
-/*
- *--------------------------------------------------------------
- * Index Controller (Homepage)
- *--------------------------------------------------------------
- * Controller for showing the homepage of the service
- * @TODO refactoring pending
- */
 func index(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
 	res.Write([]byte(`{"message": "Welcome to activity logger microservices"}`))
 }
 
-/*
- *---------------------------------------------------------------
- * Create Create operation Log Controller
- *---------------------------------------------------------------
- * @TODO refactoring pending
- * Controller for creating a login log
- *
- */
-func LogCreate(res http.ResponseWriter, req *http.Request) {
-	res.Header().Set("Content-Type", "application/json")
-	var log Log
-	json.NewDecoder(req.Body).Decode(&log)
-	collection := database.Collection("logs")
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	result, _ := collection.InsertOne(ctx, log)
-	json.NewEncoder(res).Encode(result)
-}
-/*
- *------------------------------------------------------------
- * Get logs by user
- *------------------------------------------------------------
- * Controller for getting the logs of the user
- * according to the user name sent by the microservice
- * paginating the logs of the user
- */
-func LogByUser(res http.ResponseWriter, req *http.Request) {
-	res.Header().Set("Content-Type", "application/json")
-	var logg []*Log
-	params := mux.Vars(req)
-	id := params["id"]
-	page := params["page"]
-	pg, _ := strconv.ParseInt(page,10,64)
-	number := params["no"]
-	no, _ := strconv.ParseInt(number,10,64)
-	findOptions := options.Find()
-	findOptions.SetLimit(no)
-	skip := no*pg
-	ObjId, _ := primitive.ObjectIDFromHex(id)
-	// query := bson.M{"user_id": ObjId}
-	query := []bson.M{
-		bson.M{
-			"$match": bson.M{"user_id": ObjId},
-		},
-		bson.M{
-			"$skip": skip,
-		},
+// LogCreate controller for creating new Logs
+func LogCreate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	connString := os.Getenv("DB")
+	db, err := sql.Open("postgres", connString)
+	if err != nil {
+		InternalError(w)
+		return
 	}
-	collection := database.Collection("logs")
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	cur, err := collection.Find(ctx, query, findOptions)
-	if (err != nil) {
-		log.Fatal(err)
+	defer db.Close()
+	var log LogRequest
+	json.NewDecoder(r.Body).Decode(&log)
+	createdat := time.Now().Format("2006-01-02 15:04:05")
+	var id int
+	err = db.QueryRow(`INSERT INTO logs (user_id, operation, entity, message, created_at) 
+	VALUES('` + log.User + `','` + log.Operation + `', '` + log.Entity + `', '` + log.Message + `', to_timestamp('` + createdat + `', 'YYYY-MM-DD HH24:MI:SS')) RETURNING id`).Scan(&id)
+	if err != nil {
+		InternalError(w)
+		return
 	}
-	for  cur.Next(ctx) {
-		var elem Log
-		err := cur.Decode(&elem)
-		if (err != nil) {
-			log.Fatal(err)
-		}
-		logg = append(logg, &elem)
-	}
-	if err := cur.Err(); err != nil {
-		log.Fatal(err)
-	}
-	cur.Close(ctx)
-	json.NewEncoder(res).Encode(logg)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{ "message": "Logged successfully." }`))
 }
 
-/*
- *----------------------------------------------------------------
- * Routes func
- *----------------------------------------------------------------
- * @TODO Have refactor the code into better file structure
- * @TODO Have to implement authentication middleware
- * routes are composed according to the operations in creating logs
- *
- */
- func handleRequests() {
+// func LogByUser(res http.ResponseWriter, req *http.Request) {
+// 	res.Header().Set("Content-Type", "application/json")
+// 	var logg []*Log
+// 	params := mux.Vars(req)
+// 	id := params["id"]
+// 	// page := params["page"]
+// 	// pg, _ := strconv.ParseInt(page,10,64)
+// 	number := params["no"]
+// 	no, _ := strconv.ParseInt(number, 10, 64)
+// 	findOptions := options.Find()
+// 	findOptions.SetLimit(no)
+// 	// skip := no*pg
+// 	ObjId, _ := primitive.ObjectIDFromHex(id)
+// 	query := bson.M{"user_id": ObjId}
+// 	collection := database.Collection("logs")
+// 	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+// 	cur, err := collection.Find(ctx, query, findOptions)
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
+// 	for cur.Next(ctx) {
+// 		var elem Log
+// 		err := cur.Decode(&elem)
+// 		if err != nil {
+// 			log.Fatal(err)
+// 		}
+// 		logg = append(logg, &elem)
+// 	}
+// 	if err := cur.Err(); err != nil {
+// 		log.Fatal(err)
+// 	}
+// 	cur.Close(ctx)
+// 	json.NewEncoder(res).Encode(logg)
+// }
+
+func handleRequests() {
 	fmt.Printf("Activity logger started 🔥🔥🔥")
 	router := mux.NewRouter().StrictSlash(true)
 	router.HandleFunc("/", index).Methods("GET")
 	router.HandleFunc("/", LogCreate).Methods("POST")
-	router.HandleFunc("/{id}/{page}/{no}", LogByUser).Methods("GET")
-	log.Fatal(http.ListenAndServe(":8000", router))
+	// router.HandleFunc("/{id}/{page}/{no}", LogByUser).Methods("GET")
+	srv := &http.Server{
+		Handler:      router,
+		Addr:         "127.0.0.1:8000",
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  10 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
+
 }
 
-/*
- *---------------------------------------------------------------------
- * Main Func
- *---------------------------------------------------------------------
- * Main function starts from here. Have to call the routes to this
- * function for execution
- *
- */
 func main() {
-	// Client contest is created in the main func and it will be accessible for the entire program
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	clientOptions := options.Client().ApplyURI("mongodb://127.0.0.1:27017")
-	client, err := mongo.Connect(ctx, clientOptions)
-	database = client.Database("kjc")
-	if (err != nil) {
-		log.Fatal(err)
-	}
 	handleRequests()
 }
 
+// InternalError - emits internal server error
+func InternalError(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+	w.Write([]byte(`{"message": "Something went wrong."}`))
+}
